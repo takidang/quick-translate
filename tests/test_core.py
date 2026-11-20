@@ -18,6 +18,10 @@ def test_config_roundtrip(tmp_path: Path) -> None:
         api_key="test-key-123",
         model="gemini-2.5-flash-lite",
         auto_translate=True,
+        mode="game_movie",
+        context_memory_size=12,
+        story_glossary="Nhân vật chính tên Cloud",
+        subtitle_font_size=18,
         chat_region=RectRegion(100, 200, 500, 400),
         input_point=TargetPoint(350, 620),
     )
@@ -28,6 +32,10 @@ def test_config_roundtrip(tmp_path: Path) -> None:
     assert loaded.api_key == "test-key-123"
     assert loaded.model == "gemini-2.5-flash-lite"
     assert loaded.auto_translate is True
+    assert loaded.mode == "game_movie"
+    assert loaded.context_memory_size == 12
+    assert loaded.story_glossary == "Nhân vật chính tên Cloud"
+    assert loaded.subtitle_font_size == 18
     assert loaded.chat_region == RectRegion(100, 200, 500, 400)
     assert loaded.input_point == TargetPoint(350, 620)
 
@@ -56,5 +64,9 @@ def test_qt_mainwindow_smoke(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     win = MainWindow()
     assert "QuickTranslate" in win.windowTitle()
+    win.set_game_movie_mode(True)
+    assert win.config.mode == "game_movie"
+    win.set_game_movie_mode(False)
+    assert win.config.mode == "chat"
     win.close()
     app.processEvents()

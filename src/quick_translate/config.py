@@ -64,6 +64,11 @@ class AppConfig:
     restore_clipboard: bool = True
     target_language_read: str = "Tiếng Việt"
     target_language_write: str = "Tiếng Anh"
+    mode: str = "chat"  # "chat" | "game_movie"
+    context_memory_size: int = 10
+    story_glossary: str = ""
+    subtitle_font_size: int = 15
+    subtitle_geometry: list[int] = field(default_factory=list)
     chat_region: Optional[RectRegion] = None
     input_point: Optional[TargetPoint] = None
     window_geometry: list[int] = field(default_factory=list)

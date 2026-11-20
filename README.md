@@ -2,10 +2,13 @@
 
 Ứng dụng desktop nhỏ gọn cho Windows giúp bạn đọc hiểu và trả lời chat ngoại ngữ ngay trên màn hình:
 
-- **Chọn & khóa (block) 1 khung chat trên màn hình** với viền xanh luôn nổi, xuyên chuột (click-through).
-- **Dịch toàn bộ khung chat sang Tiếng Việt** bằng Gemini Vision — hỗ trợ cả **bấm phím tắt/nút** lẫn **tự động dịch khi có tin nhắn mới** (chỉ gọi API khi nội dung trong khung thật sự thay đổi để tiết kiệm token).
-- **Ô nhập trả lời nhanh (Tiếng Việt → Tiếng Anh):** Gõ Tiếng Việt → nhấn `Enter` → Gemini dịch sang Tiếng Anh theo ngữ cảnh đoạn chat → tự đặt con trỏ vào đúng ô nhập tin nhắn bạn đã ghim và dán vào.
-- **Tự nhập API Key của riêng bạn** (lưu cục bộ trên máy, không gửi đi đâu ngoài Google Gemini). Hỗ trợ thêm backend **Gemini CLI** nếu bạn dùng gói Google AI Pro.
+- **Chọn & khóa (block) 1 khung chat / khung phụ đề trên màn hình** với viền xanh luôn nổi, xuyên chuột (click-through).
+- **Chế độ Chat:** Dịch toàn bộ khung chat sang Tiếng Việt + gõ Tiếng Việt nhấn `Enter` để dịch sang Tiếng Anh theo ngữ cảnh và tự điền vào đúng con trỏ khung chat đã ghim.
+- **Chế độ Dịch Game / Phim (Khung phụ đề nổi — Always-on-top):**
+  - Thu gọn chỉ còn **khung phụ đề trong suốt luôn nổi trên cùng** (chỉ hiện phần dịch, kéo thả di chuyển & đổi cỡ tự do, có nút **Khóa xuyên chuột** bằng `Ctrl + Shift + L` để chơi game không click nhầm).
+  - **Nhớ ngữ cảnh xuyên suốt** các câu thoại trước đó (đồng nhất xưng hô, tên nhân vật, thuật ngữ game/phim), kèm ô ghi chú tên nhân vật/bối cảnh trong Cài đặt.
+- **Tự động dịch khi có tin/thoại mới** (chỉ gọi API khi ảnh trong khung thật sự thay đổi để tiết kiệm token).
+- **Tự nhập API Key của riêng bạn** (lưu cục bộ trên máy, có nút mở thẳng trang lấy API Key miễn phí). Hỗ trợ thêm backend **Gemini CLI** nếu bạn dùng gói Google AI Pro.
 
 ---
 
@@ -24,9 +27,11 @@
 
 | Phím tắt | Chức năng |
 |---|---|
-| `Ctrl + Shift + S` | Kéo chọn & khóa khung chat trên màn hình |
+| `Ctrl + Shift + S` | Kéo chọn & khóa khung chat / khung phụ đề trên màn hình |
 | `Ctrl + Shift + T` | Click để ghim vị trí ô nhập văn bản trong khung chat |
-| `Ctrl + Shift + D` | Dịch khung chat ngay lập tức |
+| `Ctrl + Shift + D` | Dịch khung ngay lập tức |
+| `Ctrl + Shift + M` | Chuyển nhanh giữa chế độ **Chat** ↔ **Phụ đề Game / Phim** (chỉ hiện phần dịch, luôn nổi) |
+| `Ctrl + Shift + L` | Khóa / mở khóa xuyên chuột (click-through) cho khung phụ đề khi chơi game |
 | `Enter` (trong ô trả lời) | Dịch sang Tiếng Anh & điền vào ô chat đã ghim |
 | `Shift + Enter` | Xuống dòng trong ô trả lời |
 

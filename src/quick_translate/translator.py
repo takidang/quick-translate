@@ -56,6 +56,44 @@ class GeminiTranslator:
             return self._call_gemini_cli(prompt, png_bytes=png_bytes)
         return self._call_gemini_api(prompt, png_bytes=png_bytes)
 
+    def translate_game_movie_image(
+        self,
+        png_bytes: bytes,
+        history: Optional[list[str]] = None,
+    ) -> str:
+        """Dịch phụ đề/hội thoại game hoặc phim sang ngôn ngữ đọc, giữ ngữ cảnh xuyên suốt."""
+        target_lang = self.config.target_language_read or "Tiếng Việt"
+
+        parts: list[str] = [
+            f"Bạn là biên dịch viên phụ đề game & phim chuyên nghiệp, dịch tự nhiên sang {target_lang}."
+        ]
+
+        glossary = (self.config.story_glossary or "").strip()
+        if glossary:
+            parts.append(f"Ghi chú ngữ cảnh / nhân vật / xưng hô:\n{glossary}")
+
+        if history:
+            recent = history[-max(1, int(self.config.context_memory_size)) :]
+            joined = "\n".join(f"- {line}" for line in recent)
+            parts.append(
+                "Các câu thoại đã dịch ngay trước đó (hãy giữ đồng nhất xưng hô, tên riêng và mạch truyện):\n"
+                f"{joined}"
+            )
+
+        parts.append(
+            "Yêu cầu:\n"
+            f"- Đọc toàn bộ lời thoại / phụ đề trong ảnh và dịch mượt mà sang {target_lang}.\n"
+            "- Nếu có tên nhân vật nói, giữ gọn dạng `Tên: lời thoại`.\n"
+            "- Chỉ trả về DUY NHẤT nội dung phụ đề đã dịch, không giải thích, không thêm ghi chú thừa.\n"
+            "- Bỏ qua HUD/nút bấm/UI không phải lời thoại.\n"
+            "- Nếu ảnh không có chữ/phụ đề nào, trả về đúng: (Không có lời thoại)"
+        )
+
+        prompt = "\n\n".join(parts)
+        if self.config.backend == "gemini_cli":
+            return self._call_gemini_cli(prompt, png_bytes=png_bytes)
+        return self._call_gemini_api(prompt, png_bytes=png_bytes)
+
     def translate_reply(self, user_text: str, chat_context: str = "") -> str:
         """Dịch câu người dùng nhập sang ngôn ngữ gửi (mặc định Tiếng Anh) kèm ngữ cảnh chat."""
         target_lang = self.config.target_language_write or "Tiếng Anh"

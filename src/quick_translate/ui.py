@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import shutil
 import time
+import webbrowser
 from typing import Optional
 
 from PIL import Image
@@ -22,6 +24,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -30,7 +33,7 @@ from .capture import capture_region, compute_diff_percent, image_to_png_bytes
 from .config import AppConfig, RectRegion, TargetPoint
 from .hotkeys import GlobalHotkeyManager
 from .injector import inject_text
-from .overlay import PointPickerOverlay, RegionBorderOverlay, RegionSelectorOverlay
+from .overlay import PointPickerOverlay, RegionBorderOverlay, RegionSelectorOverlay, SubtitleOverlay
 from .translator import GeminiTranslator
 
 DARK_STYLESHEET = """
@@ -92,20 +95,33 @@ QCheckBox {
 
 
 class TranslateImageWorker(QThread):
-    finished_ok = Signal(str, float)
+    finished_ok = Signal(str, float, str)
     failed = Signal(str)
 
-    def __init__(self, translator: GeminiTranslator, png_bytes: bytes) -> None:
+    def __init__(
+        self,
+        translator: GeminiTranslator,
+        png_bytes: bytes,
+        mode: str = "chat",
+        history: Optional[list[str]] = None,
+    ) -> None:
         super().__init__()
         self._translator = translator
         self._png_bytes = png_bytes
+        self._mode = mode
+        self._history = list(history or [])
 
     def run(self) -> None:
         t0 = time.perf_counter()
         try:
-            text = self._translator.translate_chat_image(self._png_bytes)
+            if self._mode == "game_movie":
+                text = self._translator.translate_game_movie_image(
+                    self._png_bytes, history=self._history
+                )
+            else:
+                text = self._translator.translate_chat_image(self._png_bytes)
             elapsed = time.perf_counter() - t0
-            self.finished_ok.emit(text, elapsed)
+            self.finished_ok.emit(text, elapsed, self._mode)
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -157,7 +173,7 @@ class SettingsDialog(QDialog):
     def __init__(self, config: AppConfig, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Cài đặt QuickTranslate")
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(510)
         self._config = config
 
         layout = QVBoxLayout(self)
@@ -170,9 +186,31 @@ class SettingsDialog(QDialog):
         if idx >= 0:
             self.backend_combo.setCurrentIndex(idx)
 
+        # Trạng thái cài đặt Gemini CLI
+        cli_path = shutil.which("gemini")
+        self.lbl_cli_status = QLabel()
+        if cli_path:
+            self.lbl_cli_status.setText("✓ Đã cài Gemini CLI trên máy (sẵn sàng dùng)")
+            self.lbl_cli_status.setStyleSheet("color: #34d399; font-size: 11px;")
+        else:
+            self.lbl_cli_status.setText(
+                "⚠ Chưa cài Gemini CLI (nếu muốn dùng, chạy: npm install -g @google/gemini-cli)"
+            )
+            self.lbl_cli_status.setStyleSheet("color: #fbbf24; font-size: 11px;")
+        self.lbl_cli_status.setWordWrap(True)
+
+        # Ô nhập API Key + nút mở trang lấy API key miễn phí
+        api_row = QHBoxLayout()
         self.api_key_edit = QLineEdit(config.api_key)
         self.api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.api_key_edit.setPlaceholderText("Dán API Key từ aistudio.google.com...")
+        btn_get_key = QPushButton("🔑 Lấy API Key")
+        btn_get_key.setToolTip("Mở Google AI Studio để tạo Gemini API Key miễn phí")
+        btn_get_key.clicked.connect(
+            lambda: webbrowser.open("https://aistudio.google.com/apikey")
+        )
+        api_row.addWidget(self.api_key_edit, stretch=1)
+        api_row.addWidget(btn_get_key)
 
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
@@ -200,19 +238,39 @@ class SettingsDialog(QDialog):
         self.diff_spin.setSuffix(" %")
         self.diff_spin.setValue(config.diff_threshold)
 
-        self.show_border_cb = QCheckBox("Hiển thị viền xanh quanh khung chat đã khóa")
+        # Cài đặt riêng cho chế độ Game / Phim
+        self.memory_spin = QSpinBox()
+        self.memory_spin.setRange(0, 30)
+        self.memory_spin.setSuffix(" câu gần nhất")
+        self.memory_spin.setValue(config.context_memory_size)
+
+        self.sub_font_spin = QSpinBox()
+        self.sub_font_spin.setRange(10, 32)
+        self.sub_font_spin.setSuffix(" pt")
+        self.sub_font_spin.setValue(config.subtitle_font_size)
+
+        self.glossary_edit = QLineEdit(config.story_glossary)
+        self.glossary_edit.setPlaceholderText(
+            "VD: Game kiếm hiệp, nhân vật chính tên Cloud, xưng hô tôi/cậu..."
+        )
+
+        self.show_border_cb = QCheckBox("Hiển thị viền xanh quanh khung đã khóa")
         self.show_border_cb.setChecked(config.show_border)
 
         self.restore_clip_cb = QCheckBox("Khôi phục clipboard cũ sau khi điền xong")
         self.restore_clip_cb.setChecked(config.restore_clipboard)
 
         form.addRow("Backend AI:", self.backend_combo)
-        form.addRow("Gemini API Key:", self.api_key_edit)
+        form.addRow("", self.lbl_cli_status)
+        form.addRow("Gemini API Key:", api_row)
         form.addRow("Model:", self.model_combo)
-        form.addRow("Dịch khung chat sang:", self.read_lang_edit)
+        form.addRow("Dịch khung sang:", self.read_lang_edit)
         form.addRow("Dịch tin nhắn đi sang:", self.write_lang_edit)
         form.addRow("Chu kỳ kiểm tra tự động:", self.interval_spin)
         form.addRow("Ngưỡng thay đổi ảnh:", self.diff_spin)
+        form.addRow("Nhớ ngữ cảnh Game/Phim:", self.memory_spin)
+        form.addRow("Cỡ chữ phụ đề nổi:", self.sub_font_spin)
+        form.addRow("Ghi chú Game/Phim:", self.glossary_edit)
         form.addRow("", self.show_border_cb)
         form.addRow("", self.restore_clip_cb)
 
@@ -220,7 +278,8 @@ class SettingsDialog(QDialog):
 
         tip = QLabel(
             "Phím tắt toàn cục:  Ctrl+Shift+S (Chọn khung)  •  "
-            "Ctrl+Shift+T (Ghim ô chat)  •  Ctrl+Shift+D (Dịch ngay)"
+            "Ctrl+Shift+T (Ghim ô chat)  •  Ctrl+Shift+D (Dịch ngay)  •  "
+            "Ctrl+Shift+M (Chế độ Game/Phim)  •  Ctrl+Shift+L (Khóa/Mở xuyên chuột)"
         )
         tip.setWordWrap(True)
         tip.setStyleSheet("color: #94a3b8; font-size: 11px; margin-top: 6px;")
@@ -241,6 +300,9 @@ class SettingsDialog(QDialog):
         self._config.target_language_write = self.write_lang_edit.text().strip() or "Tiếng Anh"
         self._config.auto_interval_sec = float(self.interval_spin.value())
         self._config.diff_threshold = float(self.diff_spin.value())
+        self._config.context_memory_size = int(self.memory_spin.value())
+        self._config.subtitle_font_size = int(self.sub_font_spin.value())
+        self._config.story_glossary = self.glossary_edit.text().strip()
         self._config.show_border = self.show_border_cb.isChecked()
         self._config.restore_clipboard = self.restore_clip_cb.isChecked()
         self._config.save()
@@ -254,16 +316,22 @@ class MainWindow(QMainWindow):
 
         self._last_captured_img: Optional[Image.Image] = None
         self._last_translation: str = ""
+        self._story_history: list[str] = []
         self._img_worker: Optional[TranslateImageWorker] = None
         self._reply_worker: Optional[TranslateReplyWorker] = None
         self._selector_overlay: Optional[RegionSelectorOverlay] = None
         self._picker_overlay: Optional[PointPickerOverlay] = None
 
         self._border_overlay = RegionBorderOverlay()
+        self._subtitle_overlay = SubtitleOverlay(font_size=self.config.subtitle_font_size)
+        if len(self.config.subtitle_geometry) == 4:
+            sx, sy, sw, sh = self.config.subtitle_geometry
+            self._subtitle_overlay.setGeometry(sx, sy, max(360, sw), max(110, sh))
+
         self._hotkeys = GlobalHotkeyManager()
 
         self.setWindowTitle("QuickTranslate — Gemini")
-        self.resize(450, 560)
+        self.resize(470, 580)
         self._apply_always_on_top(self.config.always_on_top)
         self._build_ui()
         self._connect_signals()
@@ -301,7 +369,7 @@ class MainWindow(QMainWindow):
         # Hàng nút điều khiển chính
         top_row = QHBoxLayout()
         self.btn_select_region = QPushButton("📐 Chọn khung")
-        self.btn_select_region.setToolTip("Chọn & khóa vùng khung chat trên màn hình (Ctrl+Shift+S)")
+        self.btn_select_region.setToolTip("Chọn & khóa vùng khung chat / phụ đề (Ctrl+Shift+S)")
 
         self.btn_pick_input = QPushButton("🎯 Ghim ô chat")
         self.btn_pick_input.setToolTip("Click vào ô nhập tin nhắn để đặt con trỏ điền nhanh (Ctrl+Shift+T)")
@@ -310,13 +378,19 @@ class MainWindow(QMainWindow):
         self.btn_translate.setObjectName("primaryBtn")
         self.btn_translate.setToolTip("Chụp khung đã khóa và dịch sang Tiếng Việt (Ctrl+Shift+D)")
 
+        self.btn_game_mode = QPushButton("🎮 Game/Phim")
+        self.btn_game_mode.setToolTip(
+            "Chuyển sang khung phụ đề nổi (chỉ hiện phần dịch, nhớ ngữ cảnh câu chuyện) — Ctrl+Shift+M"
+        )
+
         self.btn_settings = QPushButton("⚙")
         self.btn_settings.setFixedWidth(36)
-        self.btn_settings.setToolTip("Cài đặt API Key, Model, Chu kỳ tự động...")
+        self.btn_settings.setToolTip("Cài đặt API Key, Model, Chu kỳ tự động, Ngữ cảnh Game/Phim...")
 
         top_row.addWidget(self.btn_select_region)
         top_row.addWidget(self.btn_pick_input)
         top_row.addWidget(self.btn_translate)
+        top_row.addWidget(self.btn_game_mode)
         top_row.addWidget(self.btn_settings)
         main_layout.addLayout(top_row)
 
@@ -356,8 +430,8 @@ class MainWindow(QMainWindow):
         self.translation_view = QPlainTextEdit()
         self.translation_view.setReadOnly(True)
         self.translation_view.setPlaceholderText(
-            "1. Bấm 'Chọn khung' để khóa vùng chat trên màn hình.\n"
-            "2. Bấm 'Ghim ô chat' rồi click vào ô nhập tin nhắn của ứng dụng chat.\n"
+            "1. Bấm 'Chọn khung' để khóa vùng chat hoặc vùng phụ đề game/phim.\n"
+            "2. Bấm 'Ghim ô chat' để điền nhanh (chế độ Chat), hoặc bấm '🎮 Game/Phim' để chỉ hiện khung phụ đề nổi.\n"
             "3. Bấm 'Dịch ngay' (Ctrl+Shift+D) hoặc bật 'Tự động dịch'."
         )
         self.translation_view.setFont(QFont("Segoe UI", 10))
@@ -400,6 +474,7 @@ class MainWindow(QMainWindow):
         self.btn_select_region.clicked.connect(self.start_region_selection)
         self.btn_pick_input.clicked.connect(self.start_point_picking)
         self.btn_translate.clicked.connect(lambda: self.trigger_translate_region(force=True))
+        self.btn_game_mode.clicked.connect(lambda: self.set_game_movie_mode(True))
         self.btn_settings.clicked.connect(self.open_settings)
         self.btn_send.clicked.connect(self.trigger_translate_and_fill)
         self.reply_input.submit_requested.connect(self.trigger_translate_and_fill)
@@ -409,11 +484,70 @@ class MainWindow(QMainWindow):
         self.cb_border.toggled.connect(self._on_border_toggled)
         self.cb_auto_enter.toggled.connect(self._on_auto_enter_toggled)
 
+        # Kết nối tín hiệu từ khung phụ đề Game/Phim
+        self._subtitle_overlay.select_region_clicked.connect(self.start_region_selection)
+        self._subtitle_overlay.translate_now_clicked.connect(
+            lambda: self.trigger_translate_region(force=True)
+        )
+        self._subtitle_overlay.toggle_auto_clicked.connect(
+            lambda: self.cb_auto.setChecked(not self.cb_auto.isChecked())
+        )
+        self._subtitle_overlay.clear_context_clicked.connect(self.clear_story_context)
+        self._subtitle_overlay.toggle_lock_clicked.connect(self.toggle_subtitle_lock)
+        self._subtitle_overlay.exit_subtitle_mode_clicked.connect(
+            lambda: self.set_game_movie_mode(False)
+        )
+
+        # Phím tắt toàn cục
         self._hotkeys.select_region_triggered.connect(self.start_region_selection)
         self._hotkeys.pick_input_triggered.connect(self.start_point_picking)
         self._hotkeys.translate_now_triggered.connect(
             lambda: self.trigger_translate_region(force=True)
         )
+        self._hotkeys.toggle_subtitle_mode_triggered.connect(self.toggle_game_movie_mode)
+        self._hotkeys.toggle_subtitle_lock_triggered.connect(self.toggle_subtitle_lock)
+
+    def set_game_movie_mode(self, enabled: bool) -> None:
+        """Chuyển giữa chế độ Chat đầy đủ và khung phụ đề nổi Game/Phim (chỉ hiện phần dịch)."""
+        self.config.mode = "game_movie" if enabled else "chat"
+        self.config.save()
+
+        if enabled:
+            self.hide()
+            self._subtitle_overlay.set_font_size(self.config.subtitle_font_size)
+            if self._last_translation:
+                self._subtitle_overlay.set_subtitle_text(self._last_translation)
+            self._subtitle_overlay.set_status(
+                "Sẵn sàng", len(self._story_history), self.config.auto_translate
+            )
+            self._subtitle_overlay.show()
+            self._subtitle_overlay.raise_()
+        else:
+            if self._subtitle_overlay.is_click_through():
+                self._subtitle_overlay.set_click_through(False)
+            g = self._subtitle_overlay.geometry()
+            self.config.subtitle_geometry = [g.x(), g.y(), g.width(), g.height()]
+            self.config.save()
+            self._subtitle_overlay.hide()
+            self.show()
+            self.raise_()
+            self.activateWindow()
+
+    def toggle_game_movie_mode(self) -> None:
+        self.set_game_movie_mode(self.config.mode != "game_movie")
+
+    def toggle_subtitle_lock(self) -> None:
+        if self.config.mode != "game_movie":
+            return
+        new_state = not self._subtitle_overlay.is_click_through()
+        self._subtitle_overlay.set_click_through(new_state)
+
+    def clear_story_context(self) -> None:
+        self._story_history.clear()
+        self._subtitle_overlay.set_status(
+            "Đã xóa ngữ cảnh", 0, self.config.auto_translate
+        )
+        self.lbl_status.setText("Đã xóa bộ nhớ ngữ cảnh Game/Phim")
 
     def _update_status_badges(self) -> None:
         r = self.config.chat_region
@@ -434,11 +568,11 @@ class MainWindow(QMainWindow):
         self.config.auto_translate = checked
         self.config.save()
         self._sync_watch_timer()
+        status = "Đang theo dõi..." if checked else "Đã tắt tự động"
+        self.lbl_status.setText(status)
+        self._subtitle_overlay.set_status(status, len(self._story_history), checked)
         if checked:
-            self.lbl_status.setText("Đang theo dõi khung chat...")
             self.trigger_translate_region(force=False)
-        else:
-            self.lbl_status.setText("Đã tắt tự động dịch")
 
     def _on_top_toggled(self, checked: bool) -> None:
         self.config.always_on_top = checked
@@ -473,7 +607,7 @@ class MainWindow(QMainWindow):
         self._border_overlay.set_region(region, self.config.show_border)
         self._update_status_badges()
         self._sync_watch_timer()
-        self.lbl_status.setText("Đã khóa khung chat — đang dịch...")
+        self.lbl_status.setText("Đã khóa khung — đang dịch...")
         self.trigger_translate_region(force=True)
 
     def start_point_picking(self) -> None:
@@ -493,6 +627,7 @@ class MainWindow(QMainWindow):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             dlg.apply_to_config()
             self._border_overlay.set_region(self.config.chat_region, self.config.show_border)
+            self._subtitle_overlay.set_font_size(self.config.subtitle_font_size)
             self.cb_border.setChecked(self.config.show_border)
             self._sync_watch_timer()
             self._update_status_badges()
@@ -507,11 +642,16 @@ class MainWindow(QMainWindow):
         region = self.config.chat_region
         if region is None or not region.is_valid():
             if force:
-                QMessageBox.information(
-                    self,
-                    "Chưa chọn khung chat",
-                    "Hãy bấm 'Chọn khung' (hoặc Ctrl+Shift+S) để khóa vùng chat trên màn hình trước.",
-                )
+                if self.config.mode == "game_movie":
+                    self._subtitle_overlay.set_subtitle_text(
+                        "Chưa chọn vùng phụ đề! Nhấn Ctrl+Shift+S hoặc nút 📐 Khung để chọn."
+                    )
+                else:
+                    QMessageBox.information(
+                        self,
+                        "Chưa chọn khung",
+                        "Hãy bấm 'Chọn khung' (hoặc Ctrl+Shift+S) để khóa vùng cần dịch trên màn hình trước.",
+                    )
             return
 
         if self._img_worker is not None and self._img_worker.isRunning():
@@ -531,25 +671,57 @@ class MainWindow(QMainWindow):
         self._last_captured_img = img
         png_bytes = image_to_png_bytes(img)
 
-        self.lbl_status.setText("Đang dịch khung chat...")
+        self.lbl_status.setText("Đang dịch...")
+        self._subtitle_overlay.set_status(
+            "Đang dịch...", len(self._story_history), self.config.auto_translate
+        )
         self.btn_translate.setEnabled(False)
         self._border_overlay.set_active_translating(True)
 
-        self._img_worker = TranslateImageWorker(self.translator, png_bytes)
+        self._img_worker = TranslateImageWorker(
+            self.translator,
+            png_bytes,
+            mode=self.config.mode,
+            history=self._story_history,
+        )
         self._img_worker.finished_ok.connect(self._on_image_translated)
         self._img_worker.failed.connect(self._on_image_translate_failed)
         self._img_worker.start()
 
-    def _on_image_translated(self, text: str, elapsed: float) -> None:
+    def _on_image_translated(self, text: str, elapsed: float, mode: str) -> None:
         self._last_translation = text
         self.translation_view.setPlainText(text)
         self.lbl_status.setText(f"Đã dịch xong ({elapsed:.1f}s)")
         self.btn_translate.setEnabled(True)
         self._border_overlay.set_active_translating(False)
 
+        if mode == "game_movie":
+            cleaned = text.strip()
+            ignore_markers = ("(Không có lời thoại)", "(Không phát hiện nội dung văn bản)")
+            if (
+                cleaned
+                and cleaned not in ignore_markers
+                and (not self._story_history or self._story_history[-1] != cleaned)
+            ):
+                self._story_history.append(cleaned)
+                max_keep = max(1, int(self.config.context_memory_size))
+                if len(self._story_history) > max_keep:
+                    self._story_history = self._story_history[-max_keep:]
+
+            self._subtitle_overlay.set_subtitle_text(text)
+            self._subtitle_overlay.set_status(
+                f"Đã dịch ({elapsed:.1f}s)",
+                len(self._story_history),
+                self.config.auto_translate,
+            )
+
     def _on_image_translate_failed(self, err: str) -> None:
-        self.lbl_status.setText("Lỗi dịch khung chat")
+        self.lbl_status.setText("Lỗi dịch khung")
         self.translation_view.setPlainText(f"[Lỗi] {err}")
+        self._subtitle_overlay.set_subtitle_text(f"[Lỗi] {err}")
+        self._subtitle_overlay.set_status(
+            "Lỗi dịch", len(self._story_history), self.config.auto_translate
+        )
         self.btn_translate.setEnabled(True)
         self._border_overlay.set_active_translating(False)
 
@@ -600,8 +772,11 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # noqa: N802
         g = self.geometry()
         self.config.window_geometry = [g.x(), g.y(), g.width(), g.height()]
+        sg = self._subtitle_overlay.geometry()
+        self.config.subtitle_geometry = [sg.x(), sg.y(), sg.width(), sg.height()]
         self.config.save()
         self._watch_timer.stop()
         self._hotkeys.stop()
         self._border_overlay.close()
+        self._subtitle_overlay.close()
         super().closeEvent(event)

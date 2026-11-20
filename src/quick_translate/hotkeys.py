@@ -12,6 +12,8 @@ class GlobalHotkeyManager(QObject):
     select_region_triggered = Signal()
     pick_input_triggered = Signal()
     translate_now_triggered = Signal()
+    toggle_subtitle_mode_triggered = Signal()
+    toggle_subtitle_lock_triggered = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -24,6 +26,8 @@ class GlobalHotkeyManager(QObject):
             "<ctrl>+<shift>+s": self.select_region_triggered.emit,
             "<ctrl>+<shift>+t": self.pick_input_triggered.emit,
             "<ctrl>+<shift>+d": self.translate_now_triggered.emit,
+            "<ctrl>+<shift>+m": self.toggle_subtitle_mode_triggered.emit,
+            "<ctrl>+<shift>+l": self.toggle_subtitle_lock_triggered.emit,
         }
         try:
             self._listener = keyboard.GlobalHotKeys(mapping)
