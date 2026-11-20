@@ -1,6 +1,6 @@
 [project]
 name = "quick-translate"
-version = "0.3.1"
+version = "0.3.2"
 description = "Phan mem dich khung chat man hinh va dien nhanh bang Gemini"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -11,6 +11,7 @@ from PIL import Image
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QFont, QKeyEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -739,6 +740,7 @@ class MainWindow(QMainWindow):
         self._subtitle_overlay.exit_subtitle_mode_clicked.connect(
             lambda: self.set_game_movie_mode(False)
         )
+        self._subtitle_overlay.quit_app_clicked.connect(self.close)
 
         self._hotkeys.select_region_triggered.connect(self.start_region_selection)
         self._hotkeys.pick_input_triggered.connect(self.start_point_picking)
@@ -1023,13 +1025,41 @@ class MainWindow(QMainWindow):
         self.lbl_last_sent.setText(f"Lỗi: {err}")
 
     def closeEvent(self, event) -> None:  # noqa: N802
-        g = self.geometry()
-        self.config.window_geometry = [g.x(), g.y(), g.width(), g.height()]
-        sg = self._subtitle_overlay.geometry()
-        self.config.subtitle_geometry = [sg.x(), sg.y(), sg.width(), sg.height()]
-        self.config.save()
+        try:
+            g = self.geometry()
+            self.config.window_geometry = [g.x(), g.y(), g.width(), g.height()]
+            sg = self._subtitle_overlay.geometry()
+            self.config.subtitle_geometry = [sg.x(), sg.y(), sg.width(), sg.height()]
+            self.config.save()
+        except Exception:
+            pass
+
         self._watch_timer.stop()
-        self._hotkeys.stop()
-        self._border_overlay.close()
-        self._subtitle_overlay.close()
+        try:
+            self.translator._http.close()
+        except Exception:
+            pass
+
+        for ov in (
+            self._border_overlay,
+            self._subtitle_overlay,
+            self._selector_overlay,
+            self._picker_overlay,
+        ):
+            if ov is not None:
+                try:
+                    ov.hide()
+                    ov.close()
+                except Exception:
+                    pass
+
+        try:
+            self._hotkeys.stop()
+        except Exception:
+            pass
+
+        event.accept()
         super().closeEvent(event)
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()

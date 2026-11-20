@@ -264,6 +264,7 @@ class SubtitleOverlay(QWidget):
     clear_context_clicked = Signal()
     toggle_lock_clicked = Signal()
     exit_subtitle_mode_clicked = Signal()
+    quit_app_clicked = Signal()
 
     def __init__(self, font_size: int = 15) -> None:
         super().__init__(
@@ -333,6 +334,16 @@ class SubtitleOverlay(QWidget):
         self._btn_back.setStyleSheet(btn_style)
         self._btn_back.clicked.connect(self.exit_subtitle_mode_clicked.emit)
 
+        self._btn_quit = QPushButton("✕")
+        self._btn_quit.setToolTip("Thoát hoàn toàn QuickTranslate")
+        self._btn_quit.setStyleSheet(
+            "QPushButton { background: rgba(185, 28, 28, 200); color: #ffffff; "
+            "border: 1px solid rgba(248, 113, 113, 160); border-radius: 5px; "
+            "padding: 2px 7px; font-size: 11px; font-weight: 700; }"
+            "QPushButton:hover { background: rgba(220, 38, 38, 240); }"
+        )
+        self._btn_quit.clicked.connect(self.quit_app_clicked.emit)
+
         for b in (
             self._btn_region,
             self._btn_translate,
@@ -340,6 +351,7 @@ class SubtitleOverlay(QWidget):
             self._btn_clear,
             self._btn_lock,
             self._btn_back,
+            self._btn_quit,
         ):
             tb_layout.addWidget(b)
 
