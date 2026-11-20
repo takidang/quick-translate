@@ -1,0 +1,17 @@
+# Virtual environments & Python cache
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Build & packaging outputs
+build/
+dist/
+*.spec
+
+# Local config & secrets (never commit API keys)
+config.json
+.quick_translate/
+.env
+.env.*
+*.key
