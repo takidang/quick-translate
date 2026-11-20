@@ -1,25 +1,26 @@
-# QuickTranslate — Dịch khung chat & điền nhanh với Gemini
+# QuickTranslate — Dịch khung chat, Game & Phim siêu tốc trên Windows
 
-Ứng dụng desktop nhỏ gọn cho Windows giúp bạn đọc hiểu và trả lời chat ngoại ngữ ngay trên màn hình:
+Ứng dụng desktop nhỏ gọn (1 file `.exe` độc lập) giúp bạn đọc hiểu và trả lời chat ngoại ngữ hoặc dịch phụ đề game/phim theo thời gian thực:
 
-- **Chọn & khóa (block) 1 khung chat / khung phụ đề trên màn hình** với viền xanh luôn nổi, xuyên chuột (click-through).
-- **Chế độ Chat:** Dịch toàn bộ khung chat sang Tiếng Việt + gõ Tiếng Việt nhấn `Enter` để dịch sang Tiếng Anh theo ngữ cảnh và tự điền vào đúng con trỏ khung chat đã ghim.
-- **Chế độ Dịch Game / Phim (Khung phụ đề nổi — Always-on-top):**
-  - Thu gọn chỉ còn **khung phụ đề trong suốt luôn nổi trên cùng** (chỉ hiện phần dịch, kéo thả di chuyển & đổi cỡ tự do, có nút **Khóa xuyên chuột** bằng `Ctrl + Shift + L` để chơi game không click nhầm).
-  - **Nhớ ngữ cảnh xuyên suốt** các câu thoại trước đó (đồng nhất xưng hô, tên nhân vật, thuật ngữ game/phim), kèm ô ghi chú tên nhân vật/bối cảnh trong Cài đặt.
-- **Tự động dịch khi có tin/thoại mới** (chỉ gọi API khi ảnh trong khung thật sự thay đổi để tiết kiệm token).
-- **Tự nhập API Key của riêng bạn** (lưu cục bộ trên máy, có nút mở thẳng trang lấy API Key miễn phí). Hỗ trợ thêm backend **Gemini CLI** nếu bạn dùng gói Google AI Pro.
+- **Windows OCR cục bộ (~0.1 giây, 100% offline):** Đọc chữ ngay trên máy, tự bỏ qua khi lời thoại chưa đổi (kể cả khi nền game/phim đang chuyển động).
+- **5 Backend dịch để chọn linh hoạt trong Cài đặt (⚙):**
+  1. **🌐 Dịch nhanh miễn phí (Google Translate — mặc định):** Không cần API Key, mở lên dùng được ngay (~0.2 giây).
+  2. **🏠 Local AI (Ollama / LM Studio):** Chạy 100% offline trên GPU/CPU máy bạn — **0 đồng, 0 lỗi 503, nhớ ngữ cảnh Game/Phim cực mượt** (`qwen2.5:7b`, `qwen3:8b`, `gemma3:4b`, `gemma3:12b`).
+  3. **⚡ Cloud siêu nhanh (Groq / OpenRouter / DeepSeek / OpenAI):** Groq có gói miễn phí tốc độ ~0.2 giây/câu, nhớ ngữ cảnh tốt.
+  4. **✨ Gemini API:** Tự tắt Thinking để tăng tốc & tự chuyển model dự phòng khi gặp lỗi 503.
+  5. **💻 Gemini CLI:** Dùng quota gói Google AI Pro nếu đã cài `gemini`.
+- **Chế độ Chat:** Khóa khung chat → dịch Tiếng Việt; gõ Tiếng Việt nhấn `Enter` → dịch sang Tiếng Anh theo ngữ cảnh và tự điền vào đúng con trỏ ô chat đã ghim.
+- **Chế độ 🎮 Dịch Game / Phim:** Thu gọn chỉ hiện **khung phụ đề nổi Always-on-top** (có khóa xuyên chuột `Ctrl + Shift + L` để chơi game không click nhầm) + **bộ nhớ ngữ cảnh xuyên suốt** giữ đồng nhất xưng hô & tên nhân vật.
 
 ---
 
 ## Cách dùng nhanh (không cần cài Python)
 
 1. Vào mục **Releases** ở cột phải → tải file **`QuickTranslate.exe`**.
-2. Nhấp đúp mở **`QuickTranslate.exe`**.
-3. Bấm nút **⚙ (Cài đặt)** → dán **Gemini API Key** của bạn (lấy miễn phí tại [Google AI Studio](https://aistudio.google.com/apikey)) → bấm **Save**.
-4. Bấm **📐 Chọn khung** (`Ctrl + Shift + S`) để kéo khóa vùng chat cần dịch.
-5. Bấm **🎯 Ghim ô chat** (`Ctrl + Shift + T`) rồi click vào ô nhập tin nhắn của ứng dụng chat bạn muốn điền.
-6. Bấm **⚡ Dịch ngay** (`Ctrl + Shift + D`) hoặc tích **Tự động dịch khi có tin mới**. Gõ Tiếng Việt ở ô dưới rồi nhấn **`Enter`** để dịch & điền nhanh!
+2. Nhấp đúp mở **`QuickTranslate.exe`** (mặc định dùng sẵn **Google Free — không cần API Key** để test ngay).
+3. Nếu muốn dịch mượt + nhớ ngữ cảnh Game/Phim **offline trên máy mạnh (như RTX 40/50 / Legion 5)**:
+   - Cài [Ollama](https://ollama.com/download) → mở PowerShell chạy `ollama pull qwen2.5:7b` (hoặc `ollama pull gemma3:4b`).
+   - Vào **⚙ Cài đặt** trong QuickTranslate → chọn **🏠 Local AI (Ollama / LM Studio)** → bấm **Save**!
 
 ---
 
@@ -37,21 +38,11 @@
 
 ---
 
-## Tự chạy / tự build từ mã nguồn
-
-Yêu cầu: Python 3.11+ và [uv](https://docs.astral.sh/uv/).
+## Tự build từ mã nguồn
 
 ```powershell
 git clone https://github.com/takidang/quick-translate.git
 cd quick-translate
 uv sync
-uv run quick-translate
-```
-
-Đóng gói lại thành 1 file `.exe` độc lập:
-
-```powershell
 .\build_exe.bat
 ```
-
-File sau khi build nằm tại `dist\QuickTranslate.exe`.

@@ -33,6 +33,7 @@ from .capture import capture_region, compute_diff_percent, image_to_jpeg_bytes
 from .config import AppConfig, RectRegion, TargetPoint
 from .hotkeys import GlobalHotkeyManager
 from .injector import inject_text
+from .ocr import extract_text_from_image, list_ocr_languages, normalize_ocr_text
 from .overlay import PointPickerOverlay, RegionBorderOverlay, RegionSelectorOverlay, SubtitleOverlay
 from .translator import GeminiTranslator
 
@@ -77,12 +78,12 @@ QPushButton#accentBtn {
 QPushButton#accentBtn:hover {
     background-color: #047857;
 }
-QPlainTextEdit, QLineEdit, QComboBox, QDoubleSpinBox {
+QPlainTextEdit, QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox {
     background-color: #1e293b;
     color: #f8fafc;
     border: 1px solid #334155;
     border-radius: 6px;
-    padding: 6px;
+    padding: 5px 6px;
 }
 QPlainTextEdit:focus, QLineEdit:focus {
     border-color: #38bdf8;
@@ -94,34 +95,69 @@ QCheckBox {
 """
 
 
-class TranslateImageWorker(QThread):
-    finished_ok = Signal(str, float, str)
+class TranslateRegionWorker(QThread):
+    finished_ok = Signal(str, float, str, str)  # translated, elapsed, mode, ocr_text
+    skipped_unchanged = Signal()
     failed = Signal(str)
 
     def __init__(
         self,
         translator: GeminiTranslator,
-        png_bytes: bytes,
+        img: Image.Image,
+        use_local_ocr: bool,
+        ocr_language: str,
+        last_ocr_norm: str,
+        force: bool,
         mode: str = "chat",
         history: Optional[list[str]] = None,
     ) -> None:
         super().__init__()
         self._translator = translator
-        self._png_bytes = png_bytes
+        self._img = img
+        self._use_local_ocr = use_local_ocr
+        self._ocr_language = ocr_language
+        self._last_ocr_norm = last_ocr_norm
+        self._force = force
         self._mode = mode
         self._history = list(history or [])
 
     def run(self) -> None:
         t0 = time.perf_counter()
         try:
-            if self._mode == "game_movie":
-                text = self._translator.translate_game_movie_image(
-                    self._png_bytes, history=self._history
+            if self._use_local_ocr or self._translator.config.backend == "google_free":
+                raw_text = extract_text_from_image(self._img, lang_tag=self._ocr_language)
+                norm = normalize_ocr_text(raw_text)
+                if not self._force and norm == self._last_ocr_norm:
+                    self.skipped_unchanged.emit()
+                    return
+                if not raw_text.strip():
+                    empty_msg = (
+                        "(Không có lời thoại)"
+                        if self._mode == "game_movie"
+                        else "(Không phát hiện nội dung văn bản)"
+                    )
+                    self.finished_ok.emit(empty_msg, time.perf_counter() - t0, self._mode, "")
+                    return
+                if self._mode == "game_movie":
+                    translated = self._translator.translate_game_movie_text(
+                        raw_text, history=self._history
+                    )
+                else:
+                    translated = self._translator.translate_chat_text(raw_text)
+                self.finished_ok.emit(
+                    translated, time.perf_counter() - t0, self._mode, raw_text
                 )
             else:
-                text = self._translator.translate_chat_image(self._png_bytes)
-            elapsed = time.perf_counter() - t0
-            self.finished_ok.emit(text, elapsed, self._mode)
+                img_bytes = image_to_jpeg_bytes(self._img)
+                if self._mode == "game_movie":
+                    translated = self._translator.translate_game_movie_image(
+                        img_bytes, history=self._history
+                    )
+                else:
+                    translated = self._translator.translate_chat_image(img_bytes)
+                self.finished_ok.emit(
+                    translated, time.perf_counter() - t0, self._mode, ""
+                )
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -173,82 +209,98 @@ class SettingsDialog(QDialog):
     def __init__(self, config: AppConfig, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Cài đặt QuickTranslate")
-        self.setMinimumWidth(510)
+        self.setMinimumWidth(560)
         self._config = config
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
+        # 1. Chọn Backend AI
         self.backend_combo = QComboBox()
-        self.backend_combo.addItem("Gemini API (Nhanh nhất — Free Tier / API Key)", "gemini_api")
-        self.backend_combo.addItem("Gemini CLI (Dùng quota Google AI Pro)", "gemini_cli")
+        self.backend_combo.addItem(
+            "🌐 Dịch nhanh miễn phí (Google Translate — Không cần API Key)", "google_free"
+        )
+        self.backend_combo.addItem(
+            "🏠 Local AI (Ollama / LM Studio — Offline, 0đ, siêu nhanh trên GPU)", "local_ollama"
+        )
+        self.backend_combo.addItem(
+            "⚡ Cloud siêu nhanh (Groq / OpenRouter / DeepSeek / OpenAI)", "openai_compat"
+        )
+        self.backend_combo.addItem(
+            "✨ Gemini API (API Key — có tự fallback khi 503)", "gemini_api"
+        )
+        self.backend_combo.addItem(
+            "💻 Gemini CLI (Dùng quota Google AI Pro)", "gemini_cli"
+        )
         idx = self.backend_combo.findData(config.backend)
         if idx >= 0:
             self.backend_combo.setCurrentIndex(idx)
 
-        # Trạng thái cài đặt Gemini CLI
-        cli_path = shutil.which("gemini")
-        self.lbl_cli_status = QLabel()
-        if cli_path:
-            self.lbl_cli_status.setText("✓ Đã cài Gemini CLI trên máy (sẵn sàng dùng)")
-            self.lbl_cli_status.setStyleSheet("color: #34d399; font-size: 11px;")
-        else:
-            self.lbl_cli_status.setText(
-                "⚠ Chưa cài Gemini CLI (nếu muốn dùng, chạy: npm install -g @google/gemini-cli)"
-            )
-            self.lbl_cli_status.setStyleSheet("color: #fbbf24; font-size: 11px;")
-        self.lbl_cli_status.setWordWrap(True)
+        self.lbl_backend_hint = QLabel()
+        self.lbl_backend_hint.setWordWrap(True)
+        self.lbl_backend_hint.setStyleSheet("font-size: 11px;")
 
-        # Ô nhập API Key + nút mở trang lấy API key miễn phí
+        # 2. Endpoint URL + nút preset nhanh (cho Local Ollama / LM Studio / Groq / OpenRouter)
+        url_row = QHBoxLayout()
+        self.url_edit = QLineEdit()
+        self.btn_preset_1 = QPushButton("Ollama")
+        self.btn_preset_2 = QPushButton("LM Studio")
+        url_row.addWidget(self.url_edit, stretch=1)
+        url_row.addWidget(self.btn_preset_1)
+        url_row.addWidget(self.btn_preset_2)
+        self.url_widget = QWidget()
+        self.url_widget.setLayout(url_row)
+        url_row.setContentsMargins(0, 0, 0, 0)
+
+        # 3. API Key + nút lấy API Key miễn phí
         api_row = QHBoxLayout()
-        self.api_key_edit = QLineEdit(config.api_key)
+        api_row.setContentsMargins(0, 0, 0, 0)
+        self.api_key_edit = QLineEdit()
         self.api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self.api_key_edit.setPlaceholderText("Dán API Key từ aistudio.google.com...")
-        btn_get_key = QPushButton("🔑 Lấy API Key")
-        btn_get_key.setToolTip("Mở Google AI Studio để tạo Gemini API Key miễn phí")
-        btn_get_key.clicked.connect(
-            lambda: webbrowser.open("https://aistudio.google.com/apikey")
-        )
+        self.btn_get_key = QPushButton("🔑 Lấy API Key")
+        self.btn_get_key.clicked.connect(self._open_api_key_page)
         api_row.addWidget(self.api_key_edit, stretch=1)
-        api_row.addWidget(btn_get_key)
+        api_row.addWidget(self.btn_get_key)
+        self.api_widget = QWidget()
+        self.api_widget.setLayout(api_row)
 
+        # 4. Model + nút Tải model
         model_row = QHBoxLayout()
+        model_row.setContentsMargins(0, 0, 0, 0)
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
-        self.model_combo.addItems(
-            [
-                "gemini-3.8-flash",
-                "gemini-3.8-flash-lite",
-                "gemini-3.8-pro",
-                "gemini-flash-latest",
-            ]
-        )
-        self.model_combo.setCurrentText(config.model)
-
         self.btn_refresh_models = QPushButton("🔄 Tải model")
-        self.btn_refresh_models.setToolTip(
-            "Lấy danh sách model mới nhất trực tiếp từ Gemini API Key của bạn"
-        )
         self.btn_refresh_models.clicked.connect(self._refresh_models)
         model_row.addWidget(self.model_combo, stretch=1)
         model_row.addWidget(self.btn_refresh_models)
+        self.model_widget = QWidget()
+        self.model_widget.setLayout(model_row)
 
+        # 5. OCR cục bộ (Windows OCR)
+        self.use_ocr_cb = QCheckBox(
+            "Đọc chữ tại máy (Windows OCR — siêu nhanh ~0.1s, tiết kiệm token)"
+        )
+        self.use_ocr_cb.setChecked(config.use_local_ocr)
+
+        self.ocr_lang_combo = QComboBox()
+        self.ocr_lang_combo.addItem("Tự động (theo Windows)", "")
+        for lang in list_ocr_languages():
+            self.ocr_lang_combo.addItem(lang, lang)
+        ocr_idx = self.ocr_lang_combo.findData(config.ocr_language)
+        if ocr_idx >= 0:
+            self.ocr_lang_combo.setCurrentIndex(ocr_idx)
+
+        # 6. Ngôn ngữ & Tự động dịch
         self.read_lang_edit = QLineEdit(config.target_language_read)
         self.write_lang_edit = QLineEdit(config.target_language_write)
 
         self.interval_spin = QDoubleSpinBox()
-        self.interval_spin.setRange(0.8, 30.0)
+        self.interval_spin.setRange(0.5, 30.0)
         self.interval_spin.setSingleStep(0.5)
         self.interval_spin.setSuffix(" giây")
         self.interval_spin.setValue(config.auto_interval_sec)
 
-        self.diff_spin = QDoubleSpinBox()
-        self.diff_spin.setRange(0.5, 30.0)
-        self.diff_spin.setSingleStep(0.5)
-        self.diff_spin.setSuffix(" %")
-        self.diff_spin.setValue(config.diff_threshold)
-
-        # Cài đặt riêng cho chế độ Game / Phim
+        # 7. Chế độ Game / Phim
         self.memory_spin = QSpinBox()
         self.memory_spin.setRange(0, 30)
         self.memory_spin.setSuffix(" câu gần nhất")
@@ -270,14 +322,19 @@ class SettingsDialog(QDialog):
         self.restore_clip_cb = QCheckBox("Khôi phục clipboard cũ sau khi điền xong")
         self.restore_clip_cb.setChecked(config.restore_clipboard)
 
-        form.addRow("Backend AI:", self.backend_combo)
-        form.addRow("", self.lbl_cli_status)
-        form.addRow("Gemini API Key:", api_row)
-        form.addRow("Model:", model_row)
+        form.addRow("Backend dịch:", self.backend_combo)
+        form.addRow("", self.lbl_backend_hint)
+        self.lbl_url_row = QLabel("Endpoint URL:")
+        form.addRow(self.lbl_url_row, self.url_widget)
+        self.lbl_api_row = QLabel("API Key:")
+        form.addRow(self.lbl_api_row, self.api_widget)
+        self.lbl_model_row = QLabel("Model:")
+        form.addRow(self.lbl_model_row, self.model_widget)
+        form.addRow("", self.use_ocr_cb)
+        form.addRow("Ngôn ngữ OCR:", self.ocr_lang_combo)
         form.addRow("Dịch khung sang:", self.read_lang_edit)
         form.addRow("Dịch tin nhắn đi sang:", self.write_lang_edit)
         form.addRow("Chu kỳ kiểm tra tự động:", self.interval_spin)
-        form.addRow("Ngưỡng thay đổi ảnh:", self.diff_spin)
         form.addRow("Nhớ ngữ cảnh Game/Phim:", self.memory_spin)
         form.addRow("Cỡ chữ phụ đề nổi:", self.sub_font_spin)
         form.addRow("Ghi chú Game/Phim:", self.glossary_edit)
@@ -287,12 +344,11 @@ class SettingsDialog(QDialog):
         layout.addLayout(form)
 
         tip = QLabel(
-            "Phím tắt toàn cục:  Ctrl+Shift+S (Chọn khung)  •  "
-            "Ctrl+Shift+T (Ghim ô chat)  •  Ctrl+Shift+D (Dịch ngay)  •  "
-            "Ctrl+Shift+M (Chế độ Game/Phim)  •  Ctrl+Shift+L (Khóa/Mở xuyên chuột)"
+            "Phím tắt:  Ctrl+Shift+S (Chọn khung)  •  Ctrl+Shift+T (Ghim ô chat)  •  "
+            "Ctrl+Shift+D (Dịch ngay)  •  Ctrl+Shift+M (Game/Phim)  •  Ctrl+Shift+L (Khóa chuột)"
         )
         tip.setWordWrap(True)
-        tip.setStyleSheet("color: #94a3b8; font-size: 11px; margin-top: 6px;")
+        tip.setStyleSheet("color: #94a3b8; font-size: 11px; margin-top: 4px;")
         layout.addWidget(tip)
 
         buttons = QDialogButtonBox(
@@ -302,20 +358,161 @@ class SettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    def _refresh_models(self) -> None:
-        key = self.api_key_edit.text().strip()
-        if not key:
-            QMessageBox.warning(
-                self,
-                "Thiếu API Key",
-                "Hãy dán Gemini API Key trước rồi bấm 'Tải model'.",
+        # Lưu tạm giá trị khi chuyển qua lại giữa các backend trong dialog
+        self._draft_local_url = config.local_base_url
+        self._draft_local_model = config.local_model
+        self._draft_openai_url = config.openai_base_url
+        self._draft_openai_key = config.openai_api_key
+        self._draft_openai_model = config.openai_model
+        self._draft_gemini_key = config.api_key
+        self._draft_gemini_model = config.model
+        self._active_backend = str(self.backend_combo.currentData())
+
+        self.backend_combo.currentIndexChanged.connect(self._on_backend_changed)
+        self.btn_preset_1.clicked.connect(self._on_preset_1)
+        self.btn_preset_2.clicked.connect(self._on_preset_2)
+        self._populate_backend_fields(self._active_backend)
+
+    def _stash_current_backend_fields(self) -> None:
+        b = self._active_backend
+        if b == "local_ollama":
+            self._draft_local_url = self.url_edit.text().strip()
+            self._draft_local_model = self.model_combo.currentText().strip()
+        elif b == "openai_compat":
+            self._draft_openai_url = self.url_edit.text().strip()
+            self._draft_openai_key = self.api_key_edit.text().strip()
+            self._draft_openai_model = self.model_combo.currentText().strip()
+        elif b in ("gemini_api", "gemini_cli"):
+            self._draft_gemini_key = self.api_key_edit.text().strip()
+            self._draft_gemini_model = self.model_combo.currentText().strip()
+
+    def _on_backend_changed(self) -> None:
+        self._stash_current_backend_fields()
+        self._active_backend = str(self.backend_combo.currentData())
+        self._populate_backend_fields(self._active_backend)
+
+    def _populate_backend_fields(self, b: str) -> None:
+        show_url = b in ("local_ollama", "openai_compat")
+        show_key = b in ("openai_compat", "gemini_api")
+        show_model = b != "google_free"
+
+        self.lbl_url_row.setVisible(show_url)
+        self.url_widget.setVisible(show_url)
+        self.lbl_api_row.setVisible(show_key)
+        self.api_widget.setVisible(show_key)
+        self.lbl_model_row.setVisible(show_model)
+        self.model_widget.setVisible(show_model)
+        self.btn_refresh_models.setVisible(b in ("local_ollama", "openai_compat", "gemini_api"))
+
+        self.model_combo.clear()
+
+        if b == "google_free":
+            self.lbl_backend_hint.setText(
+                "✓ Dùng ngay không cần API Key, tốc độ ~0.2 giây (kết hợp Windows OCR). "
+                "Phù hợp chat nhanh & thử nghiệm; để dịch Game/Phim có nhớ ngữ cảnh, hãy chọn Local AI hoặc Groq."
             )
-            return
+            self.lbl_backend_hint.setStyleSheet("color: #34d399; font-size: 11px;")
+
+        elif b == "local_ollama":
+            self.url_edit.setText(self._draft_local_url or "http://localhost:11434/v1")
+            self.btn_preset_1.setText("Ollama")
+            self.btn_preset_2.setText("LM Studio")
+            self.model_combo.addItems(
+                ["qwen2.5:7b", "qwen3:8b", "gemma3:4b", "gemma3:12b", "qwen2.5:3b"]
+            )
+            self.model_combo.setCurrentText(self._draft_local_model or "qwen2.5:7b")
+            self.lbl_backend_hint.setText(
+                "🏠 Chạy 100% trên máy bạn (0đ, 0 lỗi 503, nhớ ngữ cảnh cực tốt). "
+                "Cài Ollama tại ollama.com rồi chạy: ollama pull qwen2.5:7b (hoặc gemma3:4b)."
+            )
+            self.lbl_backend_hint.setStyleSheet("color: #38bdf8; font-size: 11px;")
+
+        elif b == "openai_compat":
+            self.url_edit.setText(self._draft_openai_url or "https://api.groq.com/openai/v1")
+            self.api_key_edit.setText(self._draft_openai_key)
+            self.api_key_edit.setPlaceholderText("Dán Groq / OpenRouter / DeepSeek API Key...")
+            self.btn_preset_1.setText("Groq (Miễn phí)")
+            self.btn_preset_2.setText("OpenRouter")
+            self.model_combo.addItems(
+                [
+                    "llama-3.3-70b-versatile",
+                    "qwen/qwen3-32b",
+                    "llama-3.1-8b-instant",
+                ]
+            )
+            self.model_combo.setCurrentText(
+                self._draft_openai_model or "llama-3.3-70b-versatile"
+            )
+            self.lbl_backend_hint.setText(
+                "⚡ Groq có gói miễn phí cực nhanh (~0.2 giây/câu, nhớ ngữ cảnh tốt, rất ít lỗi 503). "
+                "Bấm '🔑 Lấy API Key' để mở console.groq.com."
+            )
+            self.lbl_backend_hint.setStyleSheet("color: #a78bfa; font-size: 11px;")
+
+        elif b == "gemini_api":
+            self.api_key_edit.setText(self._draft_gemini_key)
+            self.api_key_edit.setPlaceholderText("Dán API Key từ aistudio.google.com...")
+            self.model_combo.addItems(
+                [
+                    "gemini-3.8-flash",
+                    "gemini-3.8-flash-lite",
+                    "gemini-3.8-pro",
+                    "gemini-flash-latest",
+                ]
+            )
+            self.model_combo.setCurrentText(self._draft_gemini_model or "gemini-3.8-flash")
+            self.lbl_backend_hint.setText(
+                "✨ Tự tắt Thinking để tăng tốc và tự chuyển model dự phòng nếu gặp lỗi 503."
+            )
+            self.lbl_backend_hint.setStyleSheet("color: #94a3b8; font-size: 11px;")
+
+        elif b == "gemini_cli":
+            self.model_combo.addItems(["gemini-3.8-flash", "gemini-3.8-pro"])
+            self.model_combo.setCurrentText(self._draft_gemini_model or "gemini-3.8-flash")
+            if shutil.which("gemini"):
+                self.lbl_backend_hint.setText("✓ Đã cài Gemini CLI trên máy (sẵn sàng dùng).")
+                self.lbl_backend_hint.setStyleSheet("color: #34d399; font-size: 11px;")
+            else:
+                self.lbl_backend_hint.setText(
+                    "⚠ Chưa cài Gemini CLI (cài bằng: npm install -g @google/gemini-cli)."
+                )
+                self.lbl_backend_hint.setStyleSheet("color: #fbbf24; font-size: 11px;")
+
+    def _on_preset_1(self) -> None:
+        if self._active_backend == "local_ollama":
+            self.url_edit.setText("http://localhost:11434/v1")
+            self.model_combo.setCurrentText("qwen2.5:7b")
+        elif self._active_backend == "openai_compat":
+            self.url_edit.setText("https://api.groq.com/openai/v1")
+            self.model_combo.setCurrentText("llama-3.3-70b-versatile")
+
+    def _on_preset_2(self) -> None:
+        if self._active_backend == "local_ollama":
+            self.url_edit.setText("http://localhost:1234/v1")
+        elif self._active_backend == "openai_compat":
+            self.url_edit.setText("https://openrouter.ai/api/v1")
+            self.model_combo.setCurrentText("google/gemini-2.5-flash")
+
+    def _open_api_key_page(self) -> None:
+        if self._active_backend == "openai_compat":
+            if "openrouter" in self.url_edit.text().lower():
+                webbrowser.open("https://openrouter.ai/keys")
+            else:
+                webbrowser.open("https://console.groq.com/keys")
+        else:
+            webbrowser.open("https://aistudio.google.com/apikey")
+
+    def _refresh_models(self) -> None:
+        b = self._active_backend
         self.btn_refresh_models.setEnabled(False)
         self.btn_refresh_models.setText("Đang tải...")
         try:
             translator = GeminiTranslator(self._config)
-            models = translator.list_available_models(api_key=key)
+            models = translator.list_available_models(
+                backend=b,
+                api_key=self.api_key_edit.text().strip(),
+                base_url=self.url_edit.text().strip(),
+            )
             if models:
                 current = self.model_combo.currentText().strip()
                 self.model_combo.clear()
@@ -327,12 +524,10 @@ class SettingsDialog(QDialog):
                 QMessageBox.information(
                     self,
                     "Đã cập nhật model",
-                    f"Đã tải {len(models)} model khả dụng từ tài khoản của bạn.",
+                    f"Đã tải {len(models)} model khả dụng.",
                 )
             else:
-                QMessageBox.information(
-                    self, "Thông báo", "Không tìm thấy model Gemini nào."
-                )
+                QMessageBox.information(self, "Thông báo", "Không tìm thấy model nào.")
         except Exception as exc:
             QMessageBox.warning(self, "Lỗi tải model", str(exc))
         finally:
@@ -340,13 +535,21 @@ class SettingsDialog(QDialog):
             self.btn_refresh_models.setText("🔄 Tải model")
 
     def apply_to_config(self) -> None:
-        self._config.backend = str(self.backend_combo.currentData())
-        self._config.api_key = self.api_key_edit.text().strip()
-        self._config.model = self.model_combo.currentText().strip() or "gemini-3.8-flash"
+        self._stash_current_backend_fields()
+        self._config.backend = self._active_backend
+        self._config.local_base_url = self._draft_local_url or "http://localhost:11434/v1"
+        self._config.local_model = self._draft_local_model or "qwen2.5:7b"
+        self._config.openai_base_url = self._draft_openai_url or "https://api.groq.com/openai/v1"
+        self._config.openai_api_key = self._draft_openai_key
+        self._config.openai_model = self._draft_openai_model or "llama-3.3-70b-versatile"
+        self._config.api_key = self._draft_gemini_key
+        self._config.model = self._draft_gemini_model or "gemini-3.8-flash"
+
+        self._config.use_local_ocr = self.use_ocr_cb.isChecked()
+        self._config.ocr_language = str(self.ocr_lang_combo.currentData() or "")
         self._config.target_language_read = self.read_lang_edit.text().strip() or "Tiếng Việt"
         self._config.target_language_write = self.write_lang_edit.text().strip() or "Tiếng Anh"
         self._config.auto_interval_sec = float(self.interval_spin.value())
-        self._config.diff_threshold = float(self.diff_spin.value())
         self._config.context_memory_size = int(self.memory_spin.value())
         self._config.subtitle_font_size = int(self.sub_font_spin.value())
         self._config.story_glossary = self.glossary_edit.text().strip()
@@ -362,9 +565,10 @@ class MainWindow(QMainWindow):
         self.translator = GeminiTranslator(self.config)
 
         self._last_captured_img: Optional[Image.Image] = None
+        self._last_ocr_norm: str = ""
         self._last_translation: str = ""
         self._story_history: list[str] = []
-        self._img_worker: Optional[TranslateImageWorker] = None
+        self._img_worker: Optional[TranslateRegionWorker] = None
         self._reply_worker: Optional[TranslateReplyWorker] = None
         self._selector_overlay: Optional[RegionSelectorOverlay] = None
         self._picker_overlay: Optional[PointPickerOverlay] = None
@@ -377,7 +581,7 @@ class MainWindow(QMainWindow):
 
         self._hotkeys = GlobalHotkeyManager()
 
-        self.setWindowTitle("QuickTranslate — Gemini")
+        self.setWindowTitle("QuickTranslate")
         self.resize(470, 580)
         self._apply_always_on_top(self.config.always_on_top)
         self._build_ui()
@@ -413,7 +617,6 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(12, 10, 12, 12)
         main_layout.setSpacing(8)
 
-        # Hàng nút điều khiển chính
         top_row = QHBoxLayout()
         self.btn_select_region = QPushButton("📐 Chọn khung")
         self.btn_select_region.setToolTip("Chọn & khóa vùng khung chat / phụ đề (Ctrl+Shift+S)")
@@ -427,12 +630,12 @@ class MainWindow(QMainWindow):
 
         self.btn_game_mode = QPushButton("🎮 Game/Phim")
         self.btn_game_mode.setToolTip(
-            "Chuyển sang khung phụ đề nổi (chỉ hiện phần dịch, nhớ ngữ cảnh câu chuyện) — Ctrl+Shift+M"
+            "Chuyển sang khung phụ đề nổi (chỉ hiện phần dịch, nhớ ngữ cảnh) — Ctrl+Shift+M"
         )
 
         self.btn_settings = QPushButton("⚙")
         self.btn_settings.setFixedWidth(36)
-        self.btn_settings.setToolTip("Cài đặt API Key, Model, Chu kỳ tự động, Ngữ cảnh Game/Phim...")
+        self.btn_settings.setToolTip("Cài đặt Backend (Local AI / Groq / Google Free / Gemini), OCR...")
 
         top_row.addWidget(self.btn_select_region)
         top_row.addWidget(self.btn_pick_input)
@@ -441,7 +644,6 @@ class MainWindow(QMainWindow):
         top_row.addWidget(self.btn_settings)
         main_layout.addLayout(top_row)
 
-        # Hàng tùy chọn nhanh
         opt_row = QHBoxLayout()
         self.cb_auto = QCheckBox("Tự động dịch khi có tin mới")
         self.cb_auto.setChecked(self.config.auto_translate)
@@ -458,14 +660,12 @@ class MainWindow(QMainWindow):
         opt_row.addWidget(self.cb_on_top)
         main_layout.addLayout(opt_row)
 
-        # Nhãn trạng thái vùng chọn & ô chat
         self.lbl_info = QLabel()
         self.lbl_info.setStyleSheet("color: #94a3b8; font-size: 11px;")
         main_layout.addWidget(self.lbl_info)
 
-        # Khu vực hiển thị bản dịch khung chat (Tiếng Việt)
         read_header = QHBoxLayout()
-        lbl_read = QLabel("Bản dịch khung chat (Tiếng Việt):")
+        lbl_read = QLabel("Bản dịch khung (Tiếng Việt):")
         lbl_read.setStyleSheet("font-weight: 600; color: #38bdf8;")
         self.lbl_status = QLabel("Sẵn sàng")
         self.lbl_status.setStyleSheet("color: #94a3b8; font-size: 11px;")
@@ -478,21 +678,17 @@ class MainWindow(QMainWindow):
         self.translation_view.setReadOnly(True)
         self.translation_view.setPlaceholderText(
             "1. Bấm 'Chọn khung' để khóa vùng chat hoặc vùng phụ đề game/phim.\n"
-            "2. Bấm 'Ghim ô chat' để điền nhanh (chế độ Chat), hoặc bấm '🎮 Game/Phim' để chỉ hiện khung phụ đề nổi.\n"
-            "3. Bấm 'Dịch ngay' (Ctrl+Shift+D) hoặc bật 'Tự động dịch'."
+            "2. Bấm 'Ghim ô chat' để điền nhanh, hoặc bấm '🎮 Game/Phim' để chỉ hiện phụ đề nổi.\n"
+            "3. Bấm '⚙' để chọn Local AI (Ollama), Groq siêu nhanh, Google Free (0 Key) hoặc Gemini."
         )
         self.translation_view.setFont(QFont("Segoe UI", 10))
         main_layout.addWidget(self.translation_view, stretch=3)
 
-        # Khu vực nhập tiếng Việt → dịch sang tiếng Anh & điền nhanh
         write_header = QHBoxLayout()
         lbl_write = QLabel("Trả lời nhanh (Tiếng Việt → Tiếng Anh):")
         lbl_write.setStyleSheet("font-weight: 600; color: #34d399;")
         self.cb_auto_enter = QCheckBox("Tự gửi (Enter)")
         self.cb_auto_enter.setChecked(self.config.auto_press_enter)
-        self.cb_auto_enter.setToolTip(
-            "Nếu bật, app sẽ tự nhấn Enter sau khi dán vào khung chat."
-        )
         write_header.addWidget(lbl_write)
         write_header.addStretch()
         write_header.addWidget(self.cb_auto_enter)
@@ -531,7 +727,6 @@ class MainWindow(QMainWindow):
         self.cb_border.toggled.connect(self._on_border_toggled)
         self.cb_auto_enter.toggled.connect(self._on_auto_enter_toggled)
 
-        # Kết nối tín hiệu từ khung phụ đề Game/Phim
         self._subtitle_overlay.select_region_clicked.connect(self.start_region_selection)
         self._subtitle_overlay.translate_now_clicked.connect(
             lambda: self.trigger_translate_region(force=True)
@@ -545,7 +740,6 @@ class MainWindow(QMainWindow):
             lambda: self.set_game_movie_mode(False)
         )
 
-        # Phím tắt toàn cục
         self._hotkeys.select_region_triggered.connect(self.start_region_selection)
         self._hotkeys.pick_input_triggered.connect(self.start_point_picking)
         self._hotkeys.translate_now_triggered.connect(
@@ -555,7 +749,6 @@ class MainWindow(QMainWindow):
         self._hotkeys.toggle_subtitle_lock_triggered.connect(self.toggle_subtitle_lock)
 
     def set_game_movie_mode(self, enabled: bool) -> None:
-        """Chuyển giữa chế độ Chat đầy đủ và khung phụ đề nổi Game/Phim (chỉ hiện phần dịch)."""
         self.config.mode = "game_movie" if enabled else "chat"
         self.config.save()
 
@@ -586,27 +779,26 @@ class MainWindow(QMainWindow):
     def toggle_subtitle_lock(self) -> None:
         if self.config.mode != "game_movie":
             return
-        new_state = not self._subtitle_overlay.is_click_through()
-        self._subtitle_overlay.set_click_through(new_state)
+        self._subtitle_overlay.set_click_through(not self._subtitle_overlay.is_click_through())
 
     def clear_story_context(self) -> None:
         self._story_history.clear()
-        self._subtitle_overlay.set_status(
-            "Đã xóa ngữ cảnh", 0, self.config.auto_translate
-        )
+        self._subtitle_overlay.set_status("Đã xóa ngữ cảnh", 0, self.config.auto_translate)
         self.lbl_status.setText("Đã xóa bộ nhớ ngữ cảnh Game/Phim")
 
     def _update_status_badges(self) -> None:
         r = self.config.chat_region
         p = self.config.input_point
-        region_txt = f"Khung: {r.width}×{r.height} @ ({r.x},{r.y})" if r else "Khung: Chưa chọn"
+        region_txt = f"Khung: {r.width}×{r.height}" if r else "Khung: Chưa chọn"
         point_txt = f"Ô chat: ({p.x},{p.y})" if p else "Ô chat: Chưa ghim"
-        backend_txt = "API" if self.config.backend == "gemini_api" else "CLI"
-        self.lbl_info.setText(f"{region_txt}   |   {point_txt}   |   {backend_txt}: {self.config.model}")
+        ocr_txt = "OCR" if self.config.use_local_ocr else "Vision"
+        self.lbl_info.setText(
+            f"{region_txt}  |  {point_txt}  |  {self.config.active_model_label()} ({ocr_txt})"
+        )
 
     def _sync_watch_timer(self) -> None:
         if self.config.auto_translate and self.config.chat_region is not None:
-            ms = max(800, int(self.config.auto_interval_sec * 1000))
+            ms = max(500, int(self.config.auto_interval_sec * 1000))
             self._watch_timer.start(ms)
         else:
             self._watch_timer.stop()
@@ -651,6 +843,7 @@ class MainWindow(QMainWindow):
         self.config.chat_region = region
         self.config.save()
         self._last_captured_img = None
+        self._last_ocr_norm = ""
         self._border_overlay.set_region(region, self.config.show_border)
         self._update_status_badges()
         self._sync_watch_timer()
@@ -710,35 +903,48 @@ class MainWindow(QMainWindow):
             self.lbl_status.setText(f"Lỗi chụp màn hình: {exc}")
             return
 
-        if not force:
+        use_ocr = self.config.use_local_ocr or self.config.backend == "google_free"
+        if not force and not use_ocr:
             diff = compute_diff_percent(self._last_captured_img, img)
             if diff < self.config.diff_threshold:
                 return
 
         self._last_captured_img = img
-        img_bytes = image_to_jpeg_bytes(img)
+        if force:
+            self.lbl_status.setText("Đang dịch...")
+            self._subtitle_overlay.set_status(
+                "Đang dịch...", len(self._story_history), self.config.auto_translate
+            )
+            self.btn_translate.setEnabled(False)
+            self._border_overlay.set_active_translating(True)
 
-        self.lbl_status.setText("Đang dịch...")
-        self._subtitle_overlay.set_status(
-            "Đang dịch...", len(self._story_history), self.config.auto_translate
-        )
-        self.btn_translate.setEnabled(False)
-        self._border_overlay.set_active_translating(True)
-
-        self._img_worker = TranslateImageWorker(
+        self._img_worker = TranslateRegionWorker(
             self.translator,
-            img_bytes,
+            img=img,
+            use_local_ocr=use_ocr,
+            ocr_language=self.config.ocr_language,
+            last_ocr_norm=self._last_ocr_norm,
+            force=force,
             mode=self.config.mode,
             history=self._story_history,
         )
         self._img_worker.finished_ok.connect(self._on_image_translated)
+        self._img_worker.skipped_unchanged.connect(self._on_region_unchanged)
         self._img_worker.failed.connect(self._on_image_translate_failed)
         self._img_worker.start()
 
-    def _on_image_translated(self, text: str, elapsed: float, mode: str) -> None:
+    def _on_region_unchanged(self) -> None:
+        self.btn_translate.setEnabled(True)
+        self._border_overlay.set_active_translating(False)
+
+    def _on_image_translated(
+        self, text: str, elapsed: float, mode: str, raw_ocr: str
+    ) -> None:
+        if raw_ocr:
+            self._last_ocr_norm = normalize_ocr_text(raw_ocr)
         self._last_translation = text
         self.translation_view.setPlainText(text)
-        self.lbl_status.setText(f"Đã dịch xong ({elapsed:.1f}s)")
+        self.lbl_status.setText(f"Đã dịch ({elapsed:.2f}s)")
         self.btn_translate.setEnabled(True)
         self._border_overlay.set_active_translating(False)
 
@@ -757,7 +963,7 @@ class MainWindow(QMainWindow):
 
             self._subtitle_overlay.set_subtitle_text(text)
             self._subtitle_overlay.set_status(
-                f"Đã dịch ({elapsed:.1f}s)",
+                f"Đã dịch ({elapsed:.2f}s)",
                 len(self._story_history),
                 self.config.auto_translate,
             )
@@ -803,10 +1009,10 @@ class MainWindow(QMainWindow):
                 restore_clipboard=self.config.restore_clipboard,
             )
             if self.config.input_point is not None:
-                self.lbl_last_sent.setText(f"Đã điền ({elapsed:.1f}s): {translated}")
+                self.lbl_last_sent.setText(f"Đã điền ({elapsed:.2f}s): {translated}")
             else:
                 self.lbl_last_sent.setText(
-                    f"Đã dán (chưa ghim ô chat, {elapsed:.1f}s): {translated}"
+                    f"Đã dán (chưa ghim ô chat, {elapsed:.2f}s): {translated}"
                 )
         except Exception as exc:
             self.lbl_last_sent.setText(f"Đã dịch nhưng lỗi điền: {exc}")

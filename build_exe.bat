@@ -6,6 +6,7 @@ cd /d "%~dp0"
   --paths src ^
   --hidden-import pynput.keyboard._win32 ^
   --hidden-import pynput.mouse._win32 ^
+  --collect-submodules winrt ^
   --collect-data certifi ^
   --exclude-module PySide6.QtWebEngineCore ^
   --exclude-module PySide6.QtWebEngineWidgets ^

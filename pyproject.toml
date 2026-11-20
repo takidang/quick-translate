@@ -1,6 +1,6 @@
 [project]
 name = "quick-translate"
-version = "0.2.2"
+version = "0.3.0"
 description = "Phan mem dich khung chat man hinh va dien nhanh bang Gemini"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -11,6 +11,12 @@ dependencies = [
     "google-genai>=1.0.0",
     "pynput>=1.7.7",
     "pyperclip>=1.9.0",
+    "winrt-runtime>=4.2.0",
+    "winrt-windows-foundation>=4!10.0.28000.2957",
+    "winrt-windows-graphics-imaging>=4!10.0.28000.2957",
+    "winrt-windows-media-ocr>=4!10.0.28000.2957",
+    "winrt-windows-storage-streams>=4!10.0.28000.2957",
+    "winrt-windows-globalization>=4!10.0.28000.2957",
 ]
 
 [project.scripts]

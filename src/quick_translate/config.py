@@ -52,12 +52,29 @@ class TargetPoint:
 
 @dataclass
 class AppConfig:
-    backend: str = "gemini_api"  # "gemini_api" | "gemini_cli"
+    # "google_free" | "local_ollama" | "openai_compat" | "gemini_api" | "gemini_cli"
+    backend: str = "google_free"
+
+    # OCR cục bộ trên Windows (siêu nhanh, miễn phí, tránh dịch lại khi nền game/phim động)
+    use_local_ocr: bool = True
+    ocr_language: str = ""  # Trống = tự động theo Windows
+
+    # Backend: Local AI (Ollama / LM Studio)
+    local_base_url: str = "http://localhost:11434/v1"
+    local_model: str = "qwen2.5:7b"
+
+    # Backend: OpenAI-compatible (Groq / OpenRouter / DeepSeek / OpenAI)
+    openai_base_url: str = "https://api.groq.com/openai/v1"
+    openai_api_key: str = ""
+    openai_model: str = "llama-3.3-70b-versatile"
+
+    # Backend: Gemini API / CLI
     api_key: str = ""
     model: str = "gemini-3.8-flash"
+
     auto_translate: bool = False
-    auto_interval_sec: float = 2.0
-    diff_threshold: float = 2.5  # % thay đổi điểm ảnh tối thiểu để kích hoạt dịch
+    auto_interval_sec: float = 1.5
+    diff_threshold: float = 2.5  # % thay đổi điểm ảnh tối thiểu (khi tắt OCR)
     show_border: bool = True
     always_on_top: bool = True
     auto_press_enter: bool = False
@@ -72,6 +89,17 @@ class AppConfig:
     chat_region: Optional[RectRegion] = None
     input_point: Optional[TargetPoint] = None
     window_geometry: list[int] = field(default_factory=list)
+
+    def active_model_label(self) -> str:
+        if self.backend == "google_free":
+            return "Google Free (0 Key)"
+        if self.backend == "local_ollama":
+            return f"Local: {self.local_model}"
+        if self.backend == "openai_compat":
+            return f"Cloud: {self.openai_model}"
+        if self.backend == "gemini_cli":
+            return f"Gemini CLI: {self.model}"
+        return f"Gemini API: {self.model}"
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "AppConfig":
@@ -119,7 +147,6 @@ class AppConfig:
             if env_key:
                 cfg.api_key = env_key
 
-        # Tự động nâng cấp model mặc định cũ đã bị Google ngừng cấp cho tài khoản mới
         if cfg.model == "gemini-2.5-flash":
             cfg.model = "gemini-3.8-flash"
         return cfg
