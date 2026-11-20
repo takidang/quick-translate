@@ -25,6 +25,8 @@ class GeminiTranslator:
         self.config = config
         self._client: Optional[genai.Client] = None
         self._client_key: str = ""
+        # Cache chế độ tắt thinking tối ưu cho từng model ("minimal" | "budget0" | "none")
+        self._thinking_mode_cache: dict[str, str] = {}
 
     def _get_api_client(self) -> genai.Client:
         api_key = self.config.api_key.strip()
@@ -34,7 +36,10 @@ class GeminiTranslator:
                 "hoặc chuyển sang backend Gemini CLI."
             )
         if self._client is None or self._client_key != api_key:
-            self._client = genai.Client(api_key=api_key)
+            self._client = genai.Client(
+                api_key=api_key,
+                http_options=types.HttpOptions(timeout=20_000),
+            )
             self._client_key = api_key
         return self._client
 
@@ -54,7 +59,7 @@ class GeminiTranslator:
 
         if self.config.backend == "gemini_cli":
             return self._call_gemini_cli(prompt, png_bytes=png_bytes)
-        return self._call_gemini_api(prompt, png_bytes=png_bytes)
+        return self._call_gemini_api(prompt, image_bytes=png_bytes, mime_type="image/jpeg")
 
     def translate_game_movie_image(
         self,
@@ -92,7 +97,7 @@ class GeminiTranslator:
         prompt = "\n\n".join(parts)
         if self.config.backend == "gemini_cli":
             return self._call_gemini_cli(prompt, png_bytes=png_bytes)
-        return self._call_gemini_api(prompt, png_bytes=png_bytes)
+        return self._call_gemini_api(prompt, image_bytes=png_bytes, mime_type="image/jpeg")
 
     def translate_reply(self, user_text: str, chat_context: str = "") -> str:
         """Dịch câu người dùng nhập sang ngôn ngữ gửi (mặc định Tiếng Anh) kèm ngữ cảnh chat."""
@@ -116,21 +121,64 @@ class GeminiTranslator:
             return self._call_gemini_cli(prompt)
         return self._call_gemini_api(prompt)
 
-    def _call_gemini_api(self, prompt: str, png_bytes: Optional[bytes] = None) -> str:
+    def _build_fast_config(self, mode: str) -> types.GenerateContentConfig:
+        if mode == "minimal":
+            return types.GenerateContentConfig(
+                temperature=0.2,
+                thinking_config=types.ThinkingConfig(
+                    thinking_level=types.ThinkingLevel.MINIMAL
+                ),
+            )
+        if mode == "budget0":
+            return types.GenerateContentConfig(
+                temperature=0.2,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            )
+        return types.GenerateContentConfig(temperature=0.2)
+
+    def _call_gemini_api(
+        self,
+        prompt: str,
+        image_bytes: Optional[bytes] = None,
+        mime_type: str = "image/jpeg",
+    ) -> str:
         client = self._get_api_client()
+        model_name = self.config.model or "gemini-3.8-flash"
         contents: list[object] = [prompt]
-        if png_bytes is not None:
+        if image_bytes is not None:
             contents.append(
-                types.Part.from_bytes(data=png_bytes, mime_type="image/png")
+                types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
             )
 
-        try:
-            response = client.models.generate_content(
-                model=self.config.model or "gemini-3.8-flash",
-                contents=contents,
-            )
-        except Exception as exc:
-            raise TranslationError(f"Lỗi Gemini API: {exc}") from exc
+        cached = self._thinking_mode_cache.get(model_name)
+        if cached is not None:
+            modes_to_try = [cached]
+        elif "gemini-3" in model_name.lower():
+            modes_to_try = ["minimal", "budget0", "none"]
+        else:
+            modes_to_try = ["budget0", "minimal", "none"]
+
+        response = None
+        last_exc: Optional[Exception] = None
+        for mode in modes_to_try:
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=self._build_fast_config(mode),
+                )
+                self._thinking_mode_cache[model_name] = mode
+                break
+            except Exception as exc:
+                last_exc = exc
+                err_str = str(exc).lower()
+                # Chỉ thử chế độ thinking khác nếu lỗi do tham số thinking không hợp lệ
+                if "thinking" in err_str or "invalid_argument" in err_str or "400" in err_str:
+                    continue
+                raise TranslationError(f"Lỗi Gemini API: {exc}") from exc
+
+        if response is None:
+            raise TranslationError(f"Lỗi Gemini API: {last_exc}") from last_exc
 
         text = (response.text or "").strip()
         if not text:
@@ -169,7 +217,7 @@ class GeminiTranslator:
             full_prompt = prompt
             if png_bytes is not None:
                 with tempfile.NamedTemporaryFile(
-                    suffix=".png", delete=False
+                    suffix=".jpg", delete=False
                 ) as tmp:
                     tmp.write(png_bytes)
                     tmp_path = Path(tmp.name)

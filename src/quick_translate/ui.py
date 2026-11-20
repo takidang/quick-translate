@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .capture import capture_region, compute_diff_percent, image_to_png_bytes
+from .capture import capture_region, compute_diff_percent, image_to_jpeg_bytes
 from .config import AppConfig, RectRegion, TargetPoint
 from .hotkeys import GlobalHotkeyManager
 from .injector import inject_text
@@ -716,7 +716,7 @@ class MainWindow(QMainWindow):
                 return
 
         self._last_captured_img = img
-        png_bytes = image_to_png_bytes(img)
+        img_bytes = image_to_jpeg_bytes(img)
 
         self.lbl_status.setText("Đang dịch...")
         self._subtitle_overlay.set_status(
@@ -727,7 +727,7 @@ class MainWindow(QMainWindow):
 
         self._img_worker = TranslateImageWorker(
             self.translator,
-            png_bytes,
+            img_bytes,
             mode=self.config.mode,
             history=self._story_history,
         )

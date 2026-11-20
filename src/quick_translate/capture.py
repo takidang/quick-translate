@@ -25,7 +25,7 @@ def capture_region(region: RectRegion) -> Image.Image:
 
 
 def image_to_png_bytes(img: Image.Image, max_width: int = 1280) -> bytes:
-    """Nén ảnh hợp lý trước khi gửi Gemini để tối ưu tốc độ và token."""
+    """Nén ảnh PNG hợp lý."""
     out_img = img
     if img.width > max_width:
         ratio = max_width / float(img.width)
@@ -33,6 +33,20 @@ def image_to_png_bytes(img: Image.Image, max_width: int = 1280) -> bytes:
         out_img = img.resize(new_size, Image.Resampling.LANCZOS)
     buf = io.BytesIO()
     out_img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
+def image_to_jpeg_bytes(
+    img: Image.Image, max_width: int = 1024, quality: int = 82
+) -> bytes:
+    """Nén ảnh JPEG nhẹ (nhanh hơn PNG 4-6 lần khi gửi lên Gemini Vision)."""
+    out_img = img.convert("RGB")
+    if out_img.width > max_width:
+        ratio = max_width / float(out_img.width)
+        new_size = (max_width, max(1, int(out_img.height * ratio)))
+        out_img = out_img.resize(new_size, Image.Resampling.LANCZOS)
+    buf = io.BytesIO()
+    out_img.save(buf, format="JPEG", quality=quality, optimize=True)
     return buf.getvalue()
 
 
