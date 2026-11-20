@@ -54,7 +54,7 @@ class TargetPoint:
 class AppConfig:
     backend: str = "gemini_api"  # "gemini_api" | "gemini_cli"
     api_key: str = ""
-    model: str = "gemini-2.5-flash"
+    model: str = "gemini-3.8-flash"
     auto_translate: bool = False
     auto_interval_sec: float = 2.0
     diff_threshold: float = 2.5  # % thay đổi điểm ảnh tối thiểu để kích hoạt dịch
@@ -118,6 +118,10 @@ class AppConfig:
             env_key = os.environ.get("GEMINI_API_KEY", "").strip()
             if env_key:
                 cfg.api_key = env_key
+
+        # Tự động nâng cấp model mặc định cũ đã bị Google ngừng cấp cho tài khoản mới
+        if cfg.model == "gemini-2.5-flash":
+            cfg.model = "gemini-3.8-flash"
         return cfg
 
     def save(self, path: Optional[Path] = None) -> None:

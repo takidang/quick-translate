@@ -212,16 +212,26 @@ class SettingsDialog(QDialog):
         api_row.addWidget(self.api_key_edit, stretch=1)
         api_row.addWidget(btn_get_key)
 
+        model_row = QHBoxLayout()
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
         self.model_combo.addItems(
             [
-                "gemini-2.5-flash",
-                "gemini-2.5-flash-lite",
-                "gemini-2.5-pro",
+                "gemini-3.8-flash",
+                "gemini-3.8-flash-lite",
+                "gemini-3.8-pro",
+                "gemini-flash-latest",
             ]
         )
         self.model_combo.setCurrentText(config.model)
+
+        self.btn_refresh_models = QPushButton("🔄 Tải model")
+        self.btn_refresh_models.setToolTip(
+            "Lấy danh sách model mới nhất trực tiếp từ Gemini API Key của bạn"
+        )
+        self.btn_refresh_models.clicked.connect(self._refresh_models)
+        model_row.addWidget(self.model_combo, stretch=1)
+        model_row.addWidget(self.btn_refresh_models)
 
         self.read_lang_edit = QLineEdit(config.target_language_read)
         self.write_lang_edit = QLineEdit(config.target_language_write)
@@ -263,7 +273,7 @@ class SettingsDialog(QDialog):
         form.addRow("Backend AI:", self.backend_combo)
         form.addRow("", self.lbl_cli_status)
         form.addRow("Gemini API Key:", api_row)
-        form.addRow("Model:", self.model_combo)
+        form.addRow("Model:", model_row)
         form.addRow("Dịch khung sang:", self.read_lang_edit)
         form.addRow("Dịch tin nhắn đi sang:", self.write_lang_edit)
         form.addRow("Chu kỳ kiểm tra tự động:", self.interval_spin)
@@ -292,10 +302,47 @@ class SettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+    def _refresh_models(self) -> None:
+        key = self.api_key_edit.text().strip()
+        if not key:
+            QMessageBox.warning(
+                self,
+                "Thiếu API Key",
+                "Hãy dán Gemini API Key trước rồi bấm 'Tải model'.",
+            )
+            return
+        self.btn_refresh_models.setEnabled(False)
+        self.btn_refresh_models.setText("Đang tải...")
+        try:
+            translator = GeminiTranslator(self._config)
+            models = translator.list_available_models(api_key=key)
+            if models:
+                current = self.model_combo.currentText().strip()
+                self.model_combo.clear()
+                self.model_combo.addItems(models)
+                if current in models:
+                    self.model_combo.setCurrentText(current)
+                else:
+                    self.model_combo.setCurrentIndex(0)
+                QMessageBox.information(
+                    self,
+                    "Đã cập nhật model",
+                    f"Đã tải {len(models)} model khả dụng từ tài khoản của bạn.",
+                )
+            else:
+                QMessageBox.information(
+                    self, "Thông báo", "Không tìm thấy model Gemini nào."
+                )
+        except Exception as exc:
+            QMessageBox.warning(self, "Lỗi tải model", str(exc))
+        finally:
+            self.btn_refresh_models.setEnabled(True)
+            self.btn_refresh_models.setText("🔄 Tải model")
+
     def apply_to_config(self) -> None:
         self._config.backend = str(self.backend_combo.currentData())
         self._config.api_key = self.api_key_edit.text().strip()
-        self._config.model = self.model_combo.currentText().strip() or "gemini-2.5-flash"
+        self._config.model = self.model_combo.currentText().strip() or "gemini-3.8-flash"
         self._config.target_language_read = self.read_lang_edit.text().strip() or "Tiếng Việt"
         self._config.target_language_write = self.write_lang_edit.text().strip() or "Tiếng Anh"
         self._config.auto_interval_sec = float(self.interval_spin.value())

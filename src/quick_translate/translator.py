@@ -126,7 +126,7 @@ class GeminiTranslator:
 
         try:
             response = client.models.generate_content(
-                model=self.config.model or "gemini-2.5-flash",
+                model=self.config.model or "gemini-3.8-flash",
                 contents=contents,
             )
         except Exception as exc:
@@ -136,6 +136,24 @@ class GeminiTranslator:
         if not text:
             raise TranslationError("Gemini API không trả về nội dung.")
         return text
+
+    def list_available_models(self, api_key: Optional[str] = None) -> list[str]:
+        """Lấy danh sách model Gemini khả dụng trực tiếp từ tài khoản API Key."""
+        key = (api_key if api_key is not None else self.config.api_key).strip()
+        if not key:
+            raise TranslationError("Hãy nhập Gemini API Key trước khi tải danh sách model.")
+        client = genai.Client(api_key=key)
+        models: list[str] = []
+        try:
+            for m in client.models.list():
+                name = getattr(m, "name", "") or ""
+                if name.startswith("models/"):
+                    name = name[len("models/") :]
+                if "gemini" in name.lower() and "embedding" not in name.lower():
+                    models.append(name)
+        except Exception as exc:
+            raise TranslationError(f"Không tải được danh sách model: {exc}") from exc
+        return sorted(set(models), reverse=True)
 
     def _call_gemini_cli(self, prompt: str, png_bytes: Optional[bytes] = None) -> str:
         gemini_exe = shutil.which("gemini")
