@@ -60,8 +60,8 @@ class AppConfig:
     ocr_language: str = ""  # Trống = tự động theo Windows
 
     # Backend: Local AI (Ollama / LM Studio)
-    local_base_url: str = "http://localhost:11434/v1"
-    local_model: str = "qwen2.5:7b"
+    local_base_url: str = "http://127.0.0.1:11434/v1"
+    local_model: str = "qwen2.5:3b"
 
     # Backend: OpenAI-compatible (Groq / OpenRouter / DeepSeek / OpenAI)
     openai_base_url: str = "https://api.groq.com/openai/v1"

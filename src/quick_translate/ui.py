@@ -414,16 +414,16 @@ class SettingsDialog(QDialog):
             self.lbl_backend_hint.setStyleSheet("color: #34d399; font-size: 11px;")
 
         elif b == "local_ollama":
-            self.url_edit.setText(self._draft_local_url or "http://localhost:11434/v1")
+            self.url_edit.setText(self._draft_local_url or "http://127.0.0.1:11434/v1")
             self.btn_preset_1.setText("Ollama")
             self.btn_preset_2.setText("LM Studio")
             self.model_combo.addItems(
-                ["qwen2.5:7b", "qwen3:8b", "gemma3:4b", "gemma3:12b", "qwen2.5:3b"]
+                ["qwen2.5:3b", "qwen2.5:7b", "qwen3:8b", "gemma3:4b", "gemma3:12b"]
             )
-            self.model_combo.setCurrentText(self._draft_local_model or "qwen2.5:7b")
+            self.model_combo.setCurrentText(self._draft_local_model or "qwen2.5:3b")
             self.lbl_backend_hint.setText(
-                "🏠 Chạy 100% trên máy bạn (0đ, 0 lỗi 503, nhớ ngữ cảnh cực tốt). "
-                "Cài Ollama tại ollama.com rồi chạy: ollama pull qwen2.5:7b (hoặc gemma3:4b)."
+                "🏠 Chạy 100% trên GPU máy bạn (~0.3–0.7s, 0đ, 0 lỗi 503, nhớ ngữ cảnh cực tốt). "
+                "Cài Ollama tại ollama.com rồi chạy: ollama pull qwen2.5:3b (nhanh nhất) hoặc qwen2.5:7b."
             )
             self.lbl_backend_hint.setStyleSheet("color: #38bdf8; font-size: 11px;")
 
@@ -480,15 +480,15 @@ class SettingsDialog(QDialog):
 
     def _on_preset_1(self) -> None:
         if self._active_backend == "local_ollama":
-            self.url_edit.setText("http://localhost:11434/v1")
-            self.model_combo.setCurrentText("qwen2.5:7b")
+            self.url_edit.setText("http://127.0.0.1:11434/v1")
+            self.model_combo.setCurrentText("qwen2.5:3b")
         elif self._active_backend == "openai_compat":
             self.url_edit.setText("https://api.groq.com/openai/v1")
             self.model_combo.setCurrentText("llama-3.3-70b-versatile")
 
     def _on_preset_2(self) -> None:
         if self._active_backend == "local_ollama":
-            self.url_edit.setText("http://localhost:1234/v1")
+            self.url_edit.setText("http://127.0.0.1:1234/v1")
         elif self._active_backend == "openai_compat":
             self.url_edit.setText("https://openrouter.ai/api/v1")
             self.model_combo.setCurrentText("google/gemini-2.5-flash")

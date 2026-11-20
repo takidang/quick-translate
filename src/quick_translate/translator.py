@@ -66,6 +66,7 @@ class GeminiTranslator:
         self._client: Optional[genai.Client] = None
         self._client_key: str = ""
         self._thinking_mode_cache: dict[str, str] = {}
+        self._http = requests.Session()
 
     # ------------------------------------------------------------------
     # Public translation methods (TEXT — dùng cùng Windows OCR cục bộ)
@@ -212,12 +213,20 @@ class GeminiTranslator:
             "Backend hiện tại cần bật 'Đọc chữ tại máy (Windows OCR)' để dịch vùng màn hình."
         )
 
+    def _normalize_local_url(self, url: str) -> str:
+        """Tránh độ trễ 2 giây do Windows phân giải IPv6 ::1 cho `localhost`."""
+        return (
+            url.replace("http://localhost:", "http://127.0.0.1:")
+            .replace("http://localhost/", "http://127.0.0.1/")
+            .rstrip("/")
+        )
+
     def _call_google_free(
         self, text: str, target_lang_name: str, default_code: str = "vi"
     ) -> str:
         tl = _to_lang_code(target_lang_name, default=default_code)
         try:
-            resp = requests.get(
+            resp = self._http.get(
                 "https://translate.googleapis.com/translate_a/single",
                 params={
                     "client": "gtx",
@@ -256,7 +265,8 @@ class GeminiTranslator:
                 "Mở Cài đặt (⚙) để nhập API Key."
             )
 
-        url = base_url.rstrip("/") + "/chat/completions"
+        clean_base = self._normalize_local_url(base_url) if is_local else base_url.rstrip("/")
+        url = clean_base + "/chat/completions"
         headers = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
@@ -282,11 +292,11 @@ class GeminiTranslator:
         }
 
         try:
-            resp = requests.post(
+            resp = self._http.post(
                 url,
                 headers=headers,
                 json=payload,
-                timeout=35 if is_local else 20,
+                timeout=90 if is_local else 20,
             )
         except requests.ConnectionError as exc:
             if is_local:
@@ -477,10 +487,12 @@ class GeminiTranslator:
     ) -> list[str]:
         b = backend or self.config.backend
         if b == "local_ollama":
-            url = (base_url or self.config.local_base_url or "http://localhost:11434/v1").rstrip("/")
+            url = self._normalize_local_url(
+                base_url or self.config.local_base_url or "http://127.0.0.1:11434/v1"
+            )
             # Thử /models chuẩn OpenAI (chạy cho cả Ollama & LM Studio)
             try:
-                resp = requests.get(f"{url}/models", timeout=5)
+                resp = self._http.get(f"{url}/models", timeout=5)
                 if resp.ok:
                     data = resp.json().get("data", [])
                     names = [item["id"] for item in data if isinstance(item, dict) and item.get("id")]
@@ -491,7 +503,7 @@ class GeminiTranslator:
             # Thử /api/tags của Ollama
             root = url[:-3] if url.endswith("/v1") else url
             try:
-                resp = requests.get(f"{root}/api/tags", timeout=5)
+                resp = self._http.get(f"{root}/api/tags", timeout=5)
                 resp.raise_for_status()
                 models = [m["name"] for m in resp.json().get("models", []) if m.get("name")]
                 return sorted(set(models))
